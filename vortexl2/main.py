@@ -98,6 +98,11 @@ def handle_create_tunnel(manager: ConfigManager):
     """Handle tunnel creation (config + start)."""
     ui.show_banner()
     
+    # Ask for side first
+    side = ui.prompt_tunnel_side()
+    if not side:
+        return
+    
     # Get tunnel name
     name = ui.prompt_tunnel_name()
     if not name:
@@ -112,8 +117,8 @@ def handle_create_tunnel(manager: ConfigManager):
     config = manager.create_tunnel(name)
     ui.show_success(f"Tunnel '{name}' created with interface {config.interface_name}")
     
-    # Configure tunnel
-    if not ui.prompt_tunnel_config(config):
+    # Configure tunnel based on side
+    if not ui.prompt_tunnel_config(config, side):
         # User cancelled or error
         manager.delete_tunnel(name)
         ui.show_error("Configuration cancelled. Tunnel removed.")

@@ -185,15 +185,49 @@ def prompt_select_tunnel(manager: ConfigManager) -> Optional[str]:
     return None
 
 
-def prompt_tunnel_config(config: TunnelConfig) -> bool:
-    """Prompt user for tunnel configuration."""
+def prompt_tunnel_side() -> Optional[str]:
+    """Prompt for tunnel side (Iran or Kharej)."""
+    console.print("\n[bold white]Select Server Side:[/]")
+    console.print("  [bold cyan][1][/] [green]IRAN[/] (receives connections, port forwarding)")
+    console.print("  [bold cyan][2][/] [magenta]KHAREJ[/] (remote endpoint)")
+    console.print("  [bold cyan][0][/] Cancel")
+    
+    choice = Prompt.ask("\n[bold cyan]Select side[/]", default="1")
+    
+    if choice == "1":
+        return "IRAN"
+    elif choice == "2":
+        return "KHAREJ"
+    else:
+        return None
+
+
+def prompt_tunnel_config(config: TunnelConfig, side: str) -> bool:
+    """Prompt user for tunnel configuration based on side."""
     console.print(f"\n[bold white]Configure Tunnel: {config.name}[/]")
+    console.print(f"[bold]Side: [{'green' if side == 'IRAN' else 'magenta'}]{side}[/][/]")
     console.print("[dim]Enter configuration values. Press Enter to use defaults.[/]\n")
+    
+    # Set defaults based on side
+    if side == "IRAN":
+        default_interface_ip = "10.30.30.1/24"
+        default_remote_forward = "10.30.30.2"
+        default_tunnel_id = 1000
+        default_peer_tunnel_id = 2000
+        default_session_id = 10
+        default_peer_session_id = 20
+    else:  # KHAREJ
+        default_interface_ip = "10.30.30.2/24"
+        default_remote_forward = "10.30.30.1"
+        default_tunnel_id = 2000
+        default_peer_tunnel_id = 1000
+        default_session_id = 20
+        default_peer_session_id = 10
     
     # Local IP
     default_local = config.local_ip or ""
     local_ip = Prompt.ask(
-        "[bold green]Local Server Public IP[/]",
+        "[bold green]Local Server Public IP[/] (this server)",
         default=default_local if default_local else None
     )
     if not local_ip:
@@ -203,8 +237,13 @@ def prompt_tunnel_config(config: TunnelConfig) -> bool:
     
     # Remote IP
     default_remote = config.remote_ip or ""
+    if side == "IRAN":
+        remote_label = "[bold cyan]Kharej Server Public IP[/]"
+    else:
+        remote_label = "[bold cyan]Iran Server Public IP[/]"
+    
     remote_ip = Prompt.ask(
-        "[bold cyan]Remote Server Public IP[/]",
+        remote_label,
         default=default_remote if default_remote else None
     )
     if not remote_ip:
@@ -216,16 +255,19 @@ def prompt_tunnel_config(config: TunnelConfig) -> bool:
     console.print(f"\n[dim]Configure tunnel interface IP (for {config.interface_name})[/]")
     interface_ip = Prompt.ask(
         "[bold yellow]Interface IP (CIDR)[/]",
-        default=config.interface_ip
+        default=default_interface_ip
     )
     config.interface_ip = interface_ip
     
-    # Remote forward target IP
-    remote_forward = Prompt.ask(
-        "[bold yellow]Remote Forward Target IP[/]",
-        default=config.remote_forward_ip
-    )
-    config.remote_forward_ip = remote_forward
+    # Remote forward target IP (only relevant for Iran)
+    if side == "IRAN":
+        remote_forward = Prompt.ask(
+            "[bold yellow]Remote Forward Target IP[/]",
+            default=default_remote_forward
+        )
+        config.remote_forward_ip = remote_forward
+    else:
+        config.remote_forward_ip = default_remote_forward
     
     # Tunnel IDs
     console.print("\n[dim]Configure L2TPv3 tunnel IDs (press Enter to use defaults)[/]")
@@ -233,28 +275,28 @@ def prompt_tunnel_config(config: TunnelConfig) -> bool:
     # Tunnel ID
     tunnel_id_input = Prompt.ask(
         "[bold yellow]Tunnel ID[/]",
-        default=str(config.tunnel_id)
+        default=str(default_tunnel_id)
     )
     config.tunnel_id = int(tunnel_id_input)
     
     # Peer Tunnel ID
     peer_tunnel_id_input = Prompt.ask(
         "[bold yellow]Peer Tunnel ID[/]",
-        default=str(config.peer_tunnel_id)
+        default=str(default_peer_tunnel_id)
     )
     config.peer_tunnel_id = int(peer_tunnel_id_input)
     
     # Session ID
     session_id_input = Prompt.ask(
         "[bold yellow]Session ID[/]",
-        default=str(config.session_id)
+        default=str(default_session_id)
     )
     config.session_id = int(session_id_input)
     
     # Peer Session ID
     peer_session_id_input = Prompt.ask(
         "[bold yellow]Peer Session ID[/]",
-        default=str(config.peer_session_id)
+        default=str(default_peer_session_id)
     )
     config.peer_session_id = int(peer_session_id_input)
     
