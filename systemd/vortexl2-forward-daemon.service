@@ -1,0 +1,25 @@
+[Unit]
+Description=VortexL2 Port Forward Daemon
+After=network.target vortexl2-tunnel.service
+Requires=network.target
+Documentation=file:///usr/share/doc/vortexl2/README.md
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m vortexl2.forward_daemon
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vortexl2-forward
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=65536
+
+[Install]
+WantedBy=multi-user.target

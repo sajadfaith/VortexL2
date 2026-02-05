@@ -39,6 +39,7 @@ def cmd_apply():
     """
     Apply all tunnel configurations (idempotent).
     Used by systemd service on boot.
+    Note: Port forwarding is managed by the forward-daemon service
     """
     manager = ConfigManager()
     tunnels = manager.get_all_tunnels()
@@ -54,7 +55,6 @@ def cmd_apply():
             continue
         
         tunnel = TunnelManager(config)
-        forward = ForwardManager(config)
         
         # Setup tunnel
         success, msg = tunnel.full_setup()
@@ -63,12 +63,8 @@ def cmd_apply():
         if not success:
             errors += 1
             continue
-        
-        # Setup forwards if configured
-        if config.forwarded_ports:
-            success, msg = forward.start_all_forwards()
-            print(f"Port forwards: {msg}")
     
+    print("VortexL2: Tunnel setup complete. Port forwarding managed by forward-daemon service")
     return 1 if errors > 0 else 0
 
 
@@ -161,13 +157,13 @@ def handle_delete_tunnel(manager: ConfigManager):
         tunnel = TunnelManager(config)
         forward = ForwardManager(config)
         
-        # Remove all port forwards (stop + disable + remove from config)
+        # Remove all port forwards from config
         if config.forwarded_ports:
-            ui.show_info("Removing port forwards...")
+            ui.show_info("Clearing port forwards from config...")
             ports_to_remove = list(config.forwarded_ports)  # Copy list since we're modifying it
             for port in ports_to_remove:
                 forward.remove_forward(port)
-            ui.show_success(f"Removed {len(ports_to_remove)} port forward(s)")
+            ui.show_success(f"Removed {len(ports_to_remove)} port forward(s) from config")
         
         # Stop tunnel
         ui.show_info("Stopping tunnel...")
@@ -177,7 +173,6 @@ def handle_delete_tunnel(manager: ConfigManager):
     # Delete config
     manager.delete_tunnel(selected)
     ui.show_success(f"Tunnel '{selected}' deleted")
-    
     ui.wait_for_enter()
 
 
@@ -202,6 +197,7 @@ def handle_forwards_menu(manager: ConfigManager):
     while True:
         ui.show_banner()
         ui.console.print(f"[bold]Managing forwards for tunnel: [magenta]{config.name}[/][/]\n")
+        ui.console.print("[yellow]Note: Forward daemon will manage actual port forwarding[/]\n")
         
         # Show current forwards
         forwards = forward.list_forwards()
@@ -213,36 +209,35 @@ def handle_forwards_menu(manager: ConfigManager):
         if choice == "0":
             break
         elif choice == "1":
-            # Add forwards
+            # Add forwards (to config only)
             ports = ui.prompt_ports()
             if ports:
                 success, msg = forward.add_multiple_forwards(ports)
-                ui.show_output(msg, "Add Forwards")
+                ui.show_output(msg, "Add Forwards to Config")
+                ui.show_info("Forwards added to config. Forward daemon will activate them soon.")
             ui.wait_for_enter()
         elif choice == "2":
-            # Remove forwards
+            # Remove forwards (from config)
             ports = ui.prompt_ports()
             if ports:
                 success, msg = forward.remove_multiple_forwards(ports)
-                ui.show_output(msg, "Remove Forwards")
+                ui.show_output(msg, "Remove Forwards from Config")
+                ui.show_info("Forwards removed from config.")
             ui.wait_for_enter()
         elif choice == "3":
             # List forwards (already shown above)
             ui.wait_for_enter()
         elif choice == "4":
-            # Restart all
-            success, msg = forward.restart_all_forwards()
-            ui.show_output(msg, "Restart Forwards")
+            # Restart all - just info
+            ui.show_info("Forward daemon automatically manages server restart.")
             ui.wait_for_enter()
         elif choice == "5":
-            # Stop all
-            success, msg = forward.stop_all_forwards()
-            ui.show_output(msg, "Stop Forwards")
+            # Stop all - just info
+            ui.show_info("Forward daemon manages the lifecycle of forward servers.")
             ui.wait_for_enter()
         elif choice == "6":
-            # Start all
-            success, msg = forward.start_all_forwards()
-            ui.show_output(msg, "Start Forwards")
+            # Start all - just info
+            ui.show_info("Forward daemon automatically starts configured forwards.")
             ui.wait_for_enter()
 
 
@@ -250,12 +245,10 @@ def handle_logs(manager: ConfigManager):
     """Handle log viewing."""
     ui.show_banner()
     
-    services = ["vortexl2-tunnel"]
-    
-    # Add forward services for all tunnels
-    for config in manager.get_all_tunnels():
-        for port in config.forwarded_ports:
-            services.append(f"vortexl2-forward@{port}")
+    services = [
+        "vortexl2-tunnel.service",
+        "vortexl2-forward-daemon.service"
+    ]
     
     for service in services:
         result = subprocess.run(
