@@ -39,6 +39,7 @@ def cmd_apply():
     """
     Apply all tunnel configurations (idempotent).
     Used by systemd service on boot.
+    Note: Port forwarding is managed by the forward-daemon service
     """
     manager = ConfigManager()
     tunnels = manager.get_all_tunnels()
@@ -62,12 +63,8 @@ def cmd_apply():
         if not success:
             errors += 1
             continue
-        
-        # Setup forwards if configured
-        if config.forwarded_ports:
-            success, msg = forward.start_all_forwards()
-            print(f"Port forwards: {msg}")
     
+    print("VortexL2: Tunnel setup complete. Port forwarding managed by forward-daemon service")
     return 1 if errors > 0 else 0
 
 
