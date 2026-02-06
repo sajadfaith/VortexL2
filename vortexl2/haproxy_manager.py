@@ -242,7 +242,15 @@ frontend stats_frontend
     def create_forward(self, port: int) -> Tuple[bool, str]:
         """Add a port forward."""
         if port in self.config.forwarded_ports:
-            return False, f"Port {port} already forwarding"
+            return False, f"Port {port} already in forwarded list"
+        
+        # Check if port is already in use
+        if self._is_port_listening(port):
+            process_info = self._get_port_process(port)
+            if process_info:
+                return False, f"Port {port} is already in use by: {process_info}"
+            else:
+                return False, f"Port {port} is already in use by another process"
         
         # Add to config
         self.config.add_port(port)
@@ -309,15 +317,33 @@ frontend stats_frontend
     def add_multiple_forwards(self, ports_str: str) -> Tuple[bool, str]:
         """Add multiple port forwards from comma-separated string."""
         results = []
+        active_ports = []
+        inactive_ports = []
         ports = [p.strip() for p in ports_str.split(',') if p.strip()]
         
         for port_str in ports:
             try:
                 port = int(port_str)
                 success, msg = self.create_forward(port)
-                results.append(f"Port {port}: {msg}")
+                
+                if success:
+                    active_ports.append(port)
+                    results.append(f"✓ Port {port}: ACTIVE - {msg}")
+                else:
+                    inactive_ports.append(port)
+                    results.append(f"✗ Port {port}: INACTIVE - {msg}")
             except ValueError:
-                results.append(f"Port '{port_str}': Invalid port number")
+                inactive_ports.append(port_str)
+                results.append(f"✗ Port '{port_str}': INACTIVE - Invalid port number")
+        
+        # Summary at the end
+        if active_ports and inactive_ports:
+            summary = f"\n\nSummary: {len(active_ports)} port(s) activated, {len(inactive_ports)} port(s) inactive due to conflicts"
+            results.append(summary)
+        elif active_ports:
+            results.append(f"\n\nAll {len(active_ports)} port(s) activated successfully")
+        elif inactive_ports:
+            results.append(f"\n\nAll {len(inactive_ports)} port(s) inactive - unable to activate due to conflicts")
         
         return True, "\n".join(results)
     
@@ -354,7 +380,7 @@ frontend stats_frontend
                     "port": port,
                     "tunnel": tunnel.name,
                     "remote": f"{remote_ip}:{port}",
-                    "running": self._is_port_listening(port),
+                    "active": self._is_port_listening(port),
                     "active_sessions": 0,
                     "stats": {
                         "connections": 0,
@@ -389,6 +415,55 @@ frontend stats_frontend
             return result.returncode == 0
         except Exception:
             return False
+    
+    def _get_port_process(self, port: int) -> Optional[str]:
+        """Get the process using a specific port."""
+        try:
+            # Try ss first (more modern)
+            result = subprocess.run(
+                f"ss -tlnp 2>/dev/null | grep -E ':{port}\\b'",
+                shell=True,
+                capture_output=True,
+                timeout=5,
+                text=True
+            )
+            if result.returncode == 0 and result.stdout:
+                # Parse ss output to extract process info
+                # Format: ... users:(("process",pid=123,fd=4))
+                import re
+                match = re.search(r'users:\(\("([^"]+)",pid=(\d+)', result.stdout)
+                if match:
+                    process_name = match.group(1)
+                    pid = match.group(2)
+                    return f"{process_name} (PID: {pid})"
+                return "Unknown process"
+            
+            # Fallback: try lsof
+            result = subprocess.run(
+                f"lsof -i :{port} -t 2>/dev/null | head -1",
+                shell=True,
+                capture_output=True,
+                timeout=5,
+                text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                pid = result.stdout.strip()
+                # Get process name from pid
+                ps_result = subprocess.run(
+                    f"ps -p {pid} -o comm=",
+                    shell=True,
+                    capture_output=True,
+                    timeout=5,
+                    text=True
+                )
+                if ps_result.returncode == 0 and ps_result.stdout.strip():
+                    process_name = ps_result.stdout.strip()
+                    return f"{process_name} (PID: {pid})"
+                return f"PID: {pid}"
+            
+            return None
+        except Exception:
+            return None
     
     async def start_all_forwards(self) -> Tuple[bool, str]:
         """Start all configured port forwards from all tunnels."""

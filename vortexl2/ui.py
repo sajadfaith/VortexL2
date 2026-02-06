@@ -96,6 +96,40 @@ def prompt_valid_ip(label: str, default: str = None, required: bool = True) -> O
         console.print("[dim]Format: X.X.X.X (each part 0-255)[/]")
 
 
+def prompt_encap_type() -> str:
+    """Prompt user to select encapsulation type."""
+    console.print("\n[bold cyan]Select Encapsulation Type:[/]")
+    console.print("  [1] IP  - Direct IP encapsulation")
+    console.print("  [2] UDP - UDP encapsulation")
+    console.print("[dim]Default: IP encapsulation[/dim]\n")
+    
+    choice = Prompt.ask(
+        "[bold cyan]Select encapsulation[/]",
+        choices=["1", "2"],
+        default="1"
+    )
+    
+    return "ip" if choice == "1" else "udp"
+
+
+def prompt_udp_port() -> int:
+    """Prompt user for UDP port."""
+    while True:
+        port_str = Prompt.ask(
+            "[bold cyan]UDP port[/]",
+            default="55555"
+        )
+        
+        try:
+            port = int(port_str)
+            if 1 <= port <= 65535:
+                return port
+            console.print("[red]Port must be between 1 and 65535[/]")
+        except ValueError:
+            console.print("[red]Invalid port number[/]")
+
+
+
 ASCII_BANNER = r"""
  __      __        _            _     ___  
  \ \    / /       | |          | |   |__ \ 
@@ -166,10 +200,9 @@ def show_forwards_menu(forward_mode: str = "none") -> str:
         ("2", "Remove Port Forwards"),
         ("3", "List Port Forwards"),
         ("4", "Restart All Forwards"),
-        ("5", "Stop All Forwards"),
-        ("6", "Start All Forwards"),
-        ("7", "Validate & Reload"),
-        ("8", f"Change Forward Mode (Current: {mode_label})"),
+        ("5", "Validate & Reload"),
+        ("6", f"Change Forward Mode (Current: {mode_label})"),
+        ("7", "Setup Auto-Restart (Cron)"),
         ("0", "Back to Main Menu"),
     ]
     
@@ -190,6 +223,7 @@ def show_forward_mode_menu(current_mode: str) -> str:
     modes = [
         ("1", "none", "Disabled - Port forwarding off"),
         ("2", "haproxy", "HAProxy - High performance port forwarding"),
+        ("3", "socat", "Socat - Simple port forwarding"),
         ("0", "", "Cancel"),
     ]
     
@@ -360,6 +394,20 @@ def prompt_tunnel_config(config: TunnelConfig, side: str, manager: ConfigManager
     if not remote_ip:
         return False
     config.remote_ip = remote_ip
+    
+    # Encapsulation type
+    console.print("\n[dim]Select L2TP encapsulation mode[/]")
+    encap_type = prompt_encap_type()
+    config.encap_type = encap_type
+    console.print(f"[green]✓ Encapsulation: {encap_type.upper()}[/]")
+    
+    # UDP port (if UDP mode)
+    if encap_type == "udp":
+        console.print("\n[dim]Enter UDP port for L2TP tunnel[/]")
+        udp_port = prompt_udp_port()
+        config.udp_port = udp_port
+        console.print(f"[green]✓ UDP Port: {udp_port}[/]")
+    
     
     # Interface IP (with validation and duplicate check)
     console.print(f"\n[dim]Configure tunnel interface IP (for {config.interface_name})[/]")
@@ -539,15 +587,20 @@ def show_forwards_list(forwards: list):
     table.add_column("Sessions", style="white")
     
     for fwd in forwards:
-        # Support both old and new format
-        if "running" in fwd:
-            # New format from forward.py
+        # Check for 'active' key (new format) or 'running' key (old format)
+        if "active" in fwd:
+            is_active = fwd.get("active", False)
+            status = "active" if is_active else "inactive"
+            status_style = "green" if is_active else "red"
+            sessions = str(fwd.get("active_sessions", 0))
+        elif "running" in fwd:
+            # Old format compatibility
             is_running = fwd.get("running", False)
-            status = "running" if is_running else "stopped"
+            status = "active" if is_running else "inactive"
             status_style = "green" if is_running else "red"
             sessions = str(fwd.get("active_sessions", 0))
         else:
-            # Old format (fallback)
+            # Fallback
             status = fwd.get("status", "unknown")
             status_style = "green" if status == "active" else "red"
             sessions = "-"

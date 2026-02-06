@@ -227,7 +227,7 @@ def handle_forwards_menu(manager: ConfigManager):
         ui.console.print(f"[bold]Managing forwards for tunnel: [magenta]{config.name}[/][/]\n")
         
         if current_mode == "none":
-            ui.console.print("[yellow]⚠ Port forwarding is DISABLED. Select option 8 to enable.[/]\n")
+            ui.console.print("[yellow]⚠ Port forwarding is DISABLED. Select option 6 to enable.[/]\n")
         else:
             ui.console.print(f"[green]Forward mode: {current_mode.upper()}[/]\n")
         
@@ -249,19 +249,19 @@ def handle_forwards_menu(manager: ConfigManager):
         if choice == "0":
             break
         elif choice == "1":
-            # Add forwards (to config only)
-            ports = ui.prompt_ports()
-            if ports:
-                # Always use HAProxyManager to add to config (it just updates YAML)
-                from vortexl2.haproxy_manager import HAProxyManager
-                config_manager = HAProxyManager(config)
-                success, msg = config_manager.add_multiple_forwards(ports)
-                ui.show_output(msg, "Add Forwards to Config")
-                if current_mode != "none":
+            # Add forwards - require mode selection first
+            if current_mode == "none":
+                ui.show_error("Please select a port forward mode first! (Option 6)")
+            else:
+                ports = ui.prompt_ports()
+                if ports:
+                    # Always use HAProxyManager to add to config (it just updates YAML)
+                    from vortexl2.haproxy_manager import HAProxyManager
+                    config_manager = HAProxyManager(config)
+                    success, msg = config_manager.add_multiple_forwards(ports)
+                    ui.show_output(msg, "Add Forwards to Config")
                     restart_forward_daemon()
                     ui.show_success("Forwards added. Daemon restarted to apply changes.")
-                else:
-                    ui.show_info("Forwards saved to config. Enable forwarding mode to activate.")
             ui.wait_for_enter()
         elif choice == "2":
             # Remove forwards (from config)
@@ -287,19 +287,6 @@ def handle_forwards_menu(manager: ConfigManager):
                 ui.show_success("Forward daemon restarted.")
             ui.wait_for_enter()
         elif choice == "5":
-            # Stop daemon
-            subprocess.run("systemctl stop vortexl2-forward-daemon", shell=True)
-            ui.show_success("Forward daemon stopped.")
-            ui.wait_for_enter()
-        elif choice == "6":
-            # Start daemon
-            if current_mode == "none":
-                ui.show_error("Port forwarding is disabled. Enable a mode first.")
-            else:
-                subprocess.run("systemctl start vortexl2-forward-daemon", shell=True)
-                ui.show_success("Forward daemon started.")
-            ui.wait_for_enter()
-        elif choice == "7":
             # Validate and reload
             if current_mode == "none":
                 ui.show_error("Port forwarding is disabled. Enable a mode first.")
@@ -312,7 +299,7 @@ def handle_forwards_menu(manager: ConfigManager):
                 else:
                     ui.show_error(msg)
             ui.wait_for_enter()
-        elif choice == "8":
+        elif choice == "6":
             # Change forward mode
             mode_choice = ui.show_forward_mode_menu(current_mode)
             new_mode = None
@@ -320,13 +307,33 @@ def handle_forwards_menu(manager: ConfigManager):
                 new_mode = "none"
             elif mode_choice == "2":
                 new_mode = "haproxy"
+            elif mode_choice == "3":
+                new_mode = "socat"
             
             if new_mode and new_mode != current_mode:
-                # Stop current forwarding before changing mode
-                if current_mode != "none":
-                    ui.show_info("Stopping current forwards...")
+                # Stop and cleanup current mode before switching
+                if current_mode == "haproxy":
+                    ui.show_info("Stopping HAProxy forwards...")
                     if forward:
-                        forward.stop_all_forwards()
+                        import asyncio
+                        try:
+                            asyncio.run(forward.stop_all_forwards())
+                            ui.show_success("✓ HAProxy forwards stopped")
+                        except Exception as e:
+                            ui.show_warning(f"Could not stop HAProxy gracefully: {e}")
+                    subprocess.run("systemctl stop vortexl2-forward-daemon", shell=True)
+                
+                elif current_mode == "socat":
+                    ui.show_info("Stopping Socat forwards...")
+                    try:
+                        from vortexl2.socat_manager import stop_all_socat
+                        success, msg = stop_all_socat()
+                        if success:
+                            ui.show_success(f"✓ {msg}")
+                        else:
+                            ui.show_warning(msg)
+                    except Exception as e:
+                        ui.show_warning(f"Could not stop Socat gracefully: {e}")
                     subprocess.run("systemctl stop vortexl2-forward-daemon", shell=True)
                 
                 # Set new mode
@@ -338,6 +345,54 @@ def handle_forwards_menu(manager: ConfigManager):
                     if ui.Confirm.ask("Start port forwarding now?", default=True):
                         restart_forward_daemon()
                         ui.show_success("Forward daemon started.")
+            ui.wait_for_enter()
+        elif choice == "7":
+            # Setup auto-restart cron
+            from vortexl2.cron_manager import (
+                get_auto_restart_status,
+                add_auto_restart_cron,
+                remove_auto_restart_cron
+            )
+            
+            enabled, status = get_auto_restart_status()
+            ui.console.print(f"\n[bold]Current status:[/] {status}\n")
+            
+            ui.console.print("[bold white]Auto-Restart Setup:[/]")
+            ui.console.print("  Configure automatic restart for HAProxy port forwarding daemon")
+            ui.console.print("  (Note: This only restarts port forwarding, NOT tunnels)\n")
+            ui.console.print("[bold cyan]Options:[/]")
+            ui.console.print("  [bold cyan][1][/] Enable with custom interval")
+            ui.console.print("  [bold cyan][2][/] Disable auto-restart")
+            ui.console.print("  [bold cyan][0][/] Cancel\n")
+            
+            cron_choice = ui.Prompt.ask("[bold cyan]Select option[/]", default="0")
+            
+            if cron_choice == "1":
+                ui.console.print("\n[dim]Enter restart interval in minutes (e.g., 30, 60, 120)[/]")
+                ui.console.print("[dim]Recommended: 60 (every hour), 30 (every 30 min)[/]")
+                interval_input = ui.Prompt.ask("[bold cyan]Interval (minutes)[/]", default="60")
+                
+                try:
+                    interval = int(interval_input)
+                    if interval < 1:
+                        ui.show_error("Interval must be at least 1 minute")
+                    elif interval > 1440:
+                        ui.show_error("Interval cannot exceed 1440 minutes (24 hours)")
+                    else:
+                        success, msg = add_auto_restart_cron(interval)
+                        if success:
+                            ui.show_success(msg)
+                        else:
+                            ui.show_error(msg)
+                except ValueError:
+                    ui.show_error(f"Invalid interval: {interval_input}. Must be a number.")
+            elif cron_choice == "2":
+                success, msg = remove_auto_restart_cron()
+                if success:
+                    ui.show_success(msg)
+                else:
+                    ui.show_error(msg)
+            
             ui.wait_for_enter()
 
 

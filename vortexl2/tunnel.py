@@ -149,20 +149,36 @@ class TunnelManager:
         if self.check_tunnel_exists():
             return False, f"Tunnel {ids['tunnel_id']} already exists. Delete it first or use recreate."
         
-        cmd = (
-            f"ip l2tp add tunnel "
-            f"tunnel_id {ids['tunnel_id']} "
-            f"peer_tunnel_id {ids['peer_tunnel_id']} "
-            f"encap ip "
-            f"local {self.config.local_ip} "
-            f"remote {self.config.remote_ip}"
-        )
+        # Build command based on encapsulation type
+        cmd_parts = [
+            "ip l2tp add tunnel",
+            f"tunnel_id {ids['tunnel_id']}",
+            f"peer_tunnel_id {ids['peer_tunnel_id']}",
+        ]
+        
+        # Add encapsulation-specific parameters
+        if self.config.encap_type == "udp":
+            cmd_parts.extend([
+                "encap udp",
+                f"local {self.config.local_ip}",
+                f"remote {self.config.remote_ip}",
+                f"udp_sport {self.config.udp_port}",
+                f"udp_dport {self.config.udp_port}",
+            ])
+        else:  # ip (default)
+            cmd_parts.extend([
+                "encap ip",
+                f"local {self.config.local_ip}",
+                f"remote {self.config.remote_ip}",
+            ])
+        
+        cmd = " ".join(cmd_parts)
         
         result = run_command(cmd)
         if not result.success:
             return False, f"Failed to create tunnel: {result.stderr}"
         
-        return True, f"Tunnel {ids['tunnel_id']} created successfully"
+        return True, f"Tunnel {ids['tunnel_id']} created successfully ({self.config.encap_type.upper()} mode)"
     
     def create_session(self) -> Tuple[bool, str]:
         """Create L2TP session in existing tunnel."""
@@ -206,17 +222,46 @@ class TunnelManager:
         # Check if IP already assigned
         result = run_command(f"ip addr show {self.interface_name}")
         if ip_cidr.split('/')[0] in result.stdout:
-            return True, f"IP {ip_cidr} already assigned"
+            # Still set MTU even if IP exists
+            pass
+        else:
+            result = run_command(f"ip addr add {ip_cidr} dev {self.interface_name}")
+            if not result.success:
+                # Check if it's because address exists
+                if "RTNETLINK answers: File exists" in result.stderr:
+                    pass  # Continue to MTU setting
+                else:
+                    return False, f"Failed to assign IP: {result.stderr}"
         
-        result = run_command(f"ip addr add {ip_cidr} dev {self.interface_name}")
+        # Set MTU based on encapsulation type
+        mtu = 850 if self.config.encap_type == "udp" else 1400
+        result = run_command(f"ip link set dev {self.interface_name} mtu {mtu}")
         if not result.success:
-            # Check if it's because address exists
-            if "RTNETLINK answers: File exists" in result.stderr:
-                return True, f"IP {ip_cidr} already assigned"
-            return False, f"Failed to assign IP: {result.stderr}"
+            return False, f"Failed to set MTU: {result.stderr}"
         
-        return True, f"IP {ip_cidr} assigned to {self.interface_name}"
+        return True, f"IP {ip_cidr} assigned to {self.interface_name} (MTU: {mtu})"
     
+    
+    def configure_firewall(self) -> Tuple[bool, str]:
+        """Configure firewall rules for UDP encapsulation."""
+        if self.config.encap_type != "udp":
+            return True, "Firewall rules not needed for IP encapsulation"
+        
+        port = self.config.udp_port
+        
+        # Add iptables rules
+        commands = [
+            f"iptables -I INPUT -p udp --dport {port} -j ACCEPT",
+            f"iptables -I OUTPUT -p udp --sport {port} -j ACCEPT",
+        ]
+        
+        for cmd in commands:
+            result = run_command(cmd)
+            # Ignore if rule already exists
+            if not result.success and "already exists" not in result.stderr.lower():
+                return False, f"Failed to add firewall rule: {result.stderr}"
+        
+        return True, f"Firewall configured for UDP port {port}"
     def delete_session(self) -> Tuple[bool, str]:
         """Delete L2TP session."""
         ids = self.config.get_tunnel_ids()
@@ -281,6 +326,13 @@ class TunnelManager:
         steps.append(f"Assign IP: {msg}")
         if not success:
             return False, "\n".join(steps)
+        
+        # Configure firewall if needed (UDP mode)
+        if self.config.encap_type == "udp":
+            success, msg = self.configure_firewall()
+            steps.append(f"Configure firewall: {msg}")
+            if not success:
+                return False, "\n".join(steps)
         
         steps.append(f"\n✓ Tunnel '{tunnel_name}' setup complete!")
         return True, "\n".join(steps)
