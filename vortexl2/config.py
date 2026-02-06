@@ -78,6 +78,8 @@ class TunnelConfig:
         "peer_session_id": 20,
         "interface_index": 0,
         "forwarded_ports": [],
+        "encap_type": "ip",      # "ip" or "udp"
+        "udp_port": 55555,       # Only used when encap_type == "udp"
     }
     
     def __init__(self, name: str, config_data: Dict[str, Any] = None, auto_save: bool = True):
@@ -238,6 +240,32 @@ class TunnelConfig:
     @forwarded_ports.setter
     def forwarded_ports(self, value: List[int]) -> None:
         self._config["forwarded_ports"] = value
+        self._save()
+    
+    @property
+    def encap_type(self) -> str:
+        """Get encapsulation type: 'ip' or 'udp'."""
+        return self._config.get("encap_type", "ip")
+    
+    @encap_type.setter
+    def encap_type(self, value: str) -> None:
+        """Set encapsulation type."""
+        if value not in ["ip", "udp"]:
+            raise ValueError("encap_type must be 'ip' or 'udp'")
+        self._config["encap_type"] = value
+        self._save()
+    
+    @property
+    def udp_port(self) -> int:
+        """Get UDP port (only used for encap udp mode)."""
+        return self._config.get("udp_port", 55555)
+    
+    @udp_port.setter
+    def udp_port(self, value: int) -> None:
+        """Set UDP port."""
+        if not (1 <= value <= 65535):
+            raise ValueError("UDP port must be between 1 and 65535")
+        self._config["udp_port"] = value
         self._save()
     
     def get_tunnel_ids(self) -> Dict[str, int]:

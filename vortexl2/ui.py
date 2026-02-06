@@ -96,6 +96,40 @@ def prompt_valid_ip(label: str, default: str = None, required: bool = True) -> O
         console.print("[dim]Format: X.X.X.X (each part 0-255)[/]")
 
 
+def prompt_encap_type() -> str:
+    """Prompt user to select encapsulation type."""
+    console.print("\n[bold cyan]Select Encapsulation Type:[/]")
+    console.print("  [1] IP  - Direct IP encapsulation")
+    console.print("  [2] UDP - UDP encapsulation")
+    console.print("[dim]Default: IP encapsulation[/dim]\n")
+    
+    choice = Prompt.ask(
+        "[bold cyan]Select encapsulation[/]",
+        choices=["1", "2"],
+        default="1"
+    )
+    
+    return "ip" if choice == "1" else "udp"
+
+
+def prompt_udp_port() -> int:
+    """Prompt user for UDP port."""
+    while True:
+        port_str = Prompt.ask(
+            "[bold cyan]UDP port[/]",
+            default="55555"
+        )
+        
+        try:
+            port = int(port_str)
+            if 1 <= port <= 65535:
+                return port
+            console.print("[red]Port must be between 1 and 65535[/]")
+        except ValueError:
+            console.print("[red]Invalid port number[/]")
+
+
+
 ASCII_BANNER = r"""
  __      __        _            _     ___  
  \ \    / /       | |          | |   |__ \ 
@@ -359,6 +393,20 @@ def prompt_tunnel_config(config: TunnelConfig, side: str, manager: ConfigManager
     if not remote_ip:
         return False
     config.remote_ip = remote_ip
+    
+    # Encapsulation type
+    console.print("\n[dim]Select L2TP encapsulation mode[/]")
+    encap_type = prompt_encap_type()
+    config.encap_type = encap_type
+    console.print(f"[green]✓ Encapsulation: {encap_type.upper()}[/]")
+    
+    # UDP port (if UDP mode)
+    if encap_type == "udp":
+        console.print("\n[dim]Enter UDP port for L2TP tunnel[/]")
+        udp_port = prompt_udp_port()
+        config.udp_port = udp_port
+        console.print(f"[green]✓ UDP Port: {udp_port}[/]")
+    
     
     # Interface IP (with validation and duplicate check)
     console.print(f"\n[dim]Configure tunnel interface IP (for {config.interface_name})[/]")
